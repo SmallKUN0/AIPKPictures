@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>ThreeJS 3D无限跑酷 | 双端流畅</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:system-ui}
+html,body{width:100%;height:100%;overflow:hidden;background:#050510}
+#gameCanvas{display:block;width:100vw;height:100vh;touch-action:none}
+#ui{position:fixed;top:12px;left:12px;color:#fff;z-index:10;font-size:18px;text-shadow:0 0 6px #000}
+#tip{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);color:#aaa;font-size:14px;text-align:center;z-index:10}
+#restartBtn{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);padding:14px 32px;font-size:20px;background:#2563eb;color:#fff;border:none;border-radius:8px;cursor:pointer;display:none;z-index:20}
+</style>
+</head>
+<body>
+<div id="ui">分数：<span id="score">0</span> | 帧率：<span id="fps">60</span></div>
+<div id="tip">电脑：A/D左右 | 手机：左右滑动屏幕</div>
+<button id="restartBtn">游戏结束，点击重新开始</button>
+<canvas id="gameCanvas"></canvas>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ========== 全局配置（性能优化核心） ==========
+const CONFIG = {
+  TARGET_FPS: 60,
+  MIN_FPS: 30,
+  RENDER_SCALE: Math.min(window.devicePixelRatio, 1.2), // 限制分辨率防卡顿
+  LANE_COUNT: 3,
+  LANE_WIDTH: 2.2,
+  PLAYER_SPEED: 7,
+  OBSTACLE_SPAWN_RATE: 1.6,
+  GRAVITY: -18,
+  JUMP_FORCE: 9
+};
+
+// DOM元素
+const canvas = document.getElementById('gameCanvas');
+const scoreEl = document.getElementById('score');
+const fpsEl = document.getElementById('fps');
+const restartBtn = document.getElementById('restartBtn');
+
+// 基础场景初始化
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a1022);
+scene.fog = new THREE.FogExp2(0x0a1022, 0.06);
+
+const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 300);
+camera.position.set(0, 5.5, -9);
+camera.lookAt(0, 0, 6);
+
+const renderer = new THREE.WebGLRenderer({
+  canvas,
+  antialias: false, // 关闭抗锯齿大幅提升性能
+  powerPreference: "high-performance",
+  alpha: false
+});
+renderer.setPixelRatio(CONFIG.RENDER_SCALE);
+renderer.setSize(window.innerWidth, window.innerHeight, false);
+renderer.shadowMap.enabled = false; // 关闭阴影，极致流畅
+
+// 光源
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+scene.add(ambientLight);
+const dirLight = new THREE.DirectionalLight(0x99ccff, 0.4);
+dirLight.position.set(5, 12, -5);
+scene.add(dirLight);
+
+// 控制器（仅调试视角，游戏锁定相机）
+const controls = new OrbitControls(camera, canvas);
+controls.enabled = false;
+
+// ========== 游戏数据 ==========
+let gameState = {
+  running: true,
+  score: 0,
+  playerLane: 1, // 0左 1中 2右
+  playerY: 0,
+  playerVelY: 0,
+  obstacles: [],
+  lanes: [],
+  lastObstacleSpawn: 0,
+  touchStartX: 0,
+  keys: { left: false, right: false }
+};
+
+// ========== 模型生成工具 ==========
+function createPlayer() {
+  const geo = new THREE.CylinderGeometry(0.4, 0.4, 1.2, 6);
+  const mat = new THREE.MeshStandardMaterial({ color: 0x3b82f6 });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.y = 0.6;
+  return mesh;
+}
+
+function createRoadSegment(zPos) {
+  const geo = new THREE.PlaneGeometry(CONFIG.LANE_WIDTH * CONFIG.LANE_COUNT, 12);
+  const mat = new THREE.MeshStandardMaterial({ color: 0x222838 });
+  const road = new THREE.Mesh(geo, mat);
+  road.rotation.x = -Math.PI / 2;
+  road.position.z = zPos;
+  road.userData.isRoad = true;
+  return road;
+}
+
+function createObstacle() {
+  const geo = new THREE.BoxGeometry(1.2, 1.2, 1.2);
+  const mat = new THREE.MeshStandardMaterial({ color: 0xef4444 });
+  const obs = new THREE.Mesh(geo, mat);
+  obs.position.y = 0.6;
+  obs.userData.isObstacle = true;
+  return obs;
+}
+
+// ========== 初始化场景物件 ==========
+const player = createPlayer();
+scene.add(player);
+
+// 生成初始跑道段
+const roadPool = [];
+for (let i = 0; i < 12; i++) {
+  const road = createRoadSegment(i * 12);
+  roadPool.push(road);
+  scene.add(road);
+}
+
+// 计算车道X坐标
+function laneToX(laneIdx) {
+  const offset = CONFIG.LANE_WIDTH * (CONFIG.LANE_COUNT - 1) / 2;
+  return laneIdx * CONFIG.LANE_WIDTH - offset;
+}
+
+// ========== 输入控制（键鼠+触摸） ==========
+// 键盘
+window.addEventListener('keydown', e => {
+  if (!gameState.running) return;
+  if (e.key === 'a' || e.key === 'A') gameState.keys.left = true;
+  if (e.key === 'd' || e.key === 'D') gameState.keys.right = true;
+  if (e.key === ' ') jumpPlayer();
+});
+window.addEventListener('keyup', e => {
+  if (e.key === 'a' || e.key === 'A') gameState.keys.left = false;
+  if (e.key === 'd' || e.key === 'D') gameState.keys.right = false;
+});
+
+// 触摸滑动（手机）
+canvas.addEventListener('touchstart', e => {
+  gameState.touchStartX = e.touches[0].clientX;
+});
+canvas.addEventListener('touchmove', e => {
+  if (!gameState.running) return;
+  const dx = e.touches[0].clientX - gameState.touchStartX;
+  if (dx < -40) {
+    gameState.keys.left = true;
+    gameState.keys.right = false;
+  } else if (dx > 40) {
+    gameState.keys.right = true;
+    gameState.keys.left = false;
+  } else {
+    gameState.keys.left = false;
+    gameState.keys.right = false;
+  }
+});
+canvas.addEventListener('touchend', () => {
+  gameState.keys.left = false;
+  gameState.keys.right = false;
+});
+canvas.addEventListener('tap', jumpPlayer);
+
+// 跳跃逻辑
+function jumpPlayer() {
+  if (gameState.playerY <= 0.1) {
+    gameState.playerVelY = CONFIG.JUMP_FORCE;
+  }
+}
+
+// ========== 游戏逻辑更新 ==========
+function updatePlayer(delta) {
+  // 左右换道
+  if (gameState.keys.left && gameState.playerLane > 0) {
+    gameState.playerLane -= 1;
+    gameState.keys.left = false;
+  }
+  if (gameState.keys.right && gameState.playerLane < 2) {
+    gameState.playerLane += 1;
+    gameState.keys.right = false;
+  }
+  const targetX = laneToX(gameState.playerLane);
+  player.position.x += (targetX - player.position.x) * 12 * delta;
+
+  // 重力跳跃
+  gameState.playerVelY += CONFIG.GRAVITY * delta;
+  gameState.playerY += gameState.playerVelY * delta;
+  if (gameState.playerY < 0) {
+    gameState.playerY = 0;
+    gameState.playerVelY = 0;
+  }
+  player.position.y = gameState.playerY + 0.6;
+}
+
+function spawnObstacle(time) {
+  if (time - gameState.lastObstacleSpawn < CONFIG.OBSTACLE_SPAWN_RATE) return;
+  gameState.lastObstacleSpawn = time;
+  const obs = createObstacle();
+  const randomLane = Math.floor(Math.random() * 3);
+  obs.position.x = laneToX(randomLane);
+  obs.position.z = 120;
+  gameState.obstacles.push(obs);
+  scene.add(obs);
+}
+
+function updateObstacles(delta) {
+  const speed = CONFIG.PLAYER_SPEED;
+  for (let i = gameState.obstacles.length - 1; i >= 0; i--) {
+    const obs = gameState.obstacles[i];
+    obs.position.z -= speed * delta;
+
+    // 碰撞检测
+    const dist = player.position.distanceTo(obs.position);
+    if (dist < 0.85) {
+      gameOver();
+      return;
+    }
+
+    // 超出屏幕销毁，加分
+    if (obs.position.z < -15) {
+      scene.remove(obs);
+      gameState.obstacles.splice(i, 1);
+      gameState.score += 10;
+      scoreEl.innerText = gameState.score;
+    }
+  }
+}
+
+// 跑道无限滚动复用（性能优化，不频繁创建模型）
+function updateRoad(delta) {
+  const speed = CONFIG.PLAYER_SPEED;
+  roadPool.forEach(road => {
+    road.position.z -= speed * delta;
+    if (road.position.z < -12) {
+      // 循环到最前方
+      let maxZ = -999;
+      roadPool.forEach(r => { if (r.position.z > maxZ) maxZ = r.position.z; });
+      road.position.z = maxZ + 12;
+    }
+  });
+}
+
+// 游戏结束
+function gameOver() {
+  gameState.running = false;
+  restartBtn.style.display = 'block';
+}
+restartBtn.onclick = () => {
+  // 清理障碍物
+  gameState.obstacles.forEach(obs => scene.remove(obs));
+  gameState.obstacles = [];
+  // 重置数据
+  gameState = {
+    running: true,
+    score: 0,
+    playerLane: 1,
+    playerY: 0,
+    playerVelY: 0,
+    obstacles: [],
+    lanes: [],
+    lastObstacleSpawn: 0,
+    touchStartX: 0,
+    keys: { left: false, right: false }
+  };
+  scoreEl.innerText = "0";
+  restartBtn.style.display = 'none';
+};
+
+// ========== 帧率计数器 ==========
+let frameCount = 0;
+let lastFpsTime = performance.now();
+function countFps(time) {
+  frameCount++;
+  if (time - lastFpsTime > 1000) {
+    fpsEl.innerText = frameCount;
+    frameCount = 0;
+    lastFpsTime = time;
+  }
+}
+
+// ========== 渲染循环（固定时间步，稳定帧率） ==========
+let lastTime = 0;
+const fixedDelta = 1 / CONFIG.TARGET_FPS;
+function gameLoop(time) {
+  requestAnimationFrame(gameLoop);
+  countFps(time);
+  const delta = Math.min((time - lastTime) / 1000, 0.033);
+  lastTime = time;
+
+  if (gameState.running) {
+    updatePlayer(delta);
+    updateRoad(delta);
+    spawnObstacle(time / 1000);
+    updateObstacles(delta);
+  }
+
+  renderer.render(scene, camera);
+}
+
+// ========== 窗口自适应 ==========
+function resizeCanvas() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+// 启动游戏
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>

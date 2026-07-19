@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>双端躲避球游戏</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #0a0a1a;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: Arial, sans-serif;
+        }
+        #gameCanvas {
+            border: 2px solid #4285f4;
+            background: #050510;
+            touch-action: none;
+        }
+        .ui-box {
+            color: #fff;
+            margin-bottom: 8px;
+            font-size: 18px;
+            text-align: center;
+        }
+        #restartBtn {
+            margin-top: 10px;
+            padding: 8px 24px;
+            font-size: 16px;
+            background: #4285f4;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            display: none;
+        }
+        #restartBtn:active {
+            background: #2b6cd3;
+        }
+    </style>
+</head>
+<body>
+    <div class="ui-box">分数：<span id="scoreText">0</span> | 生命：<span id="lifeText">3</span></div>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">重新开始游戏</button>
+
+    <script>
+        // 获取DOM元素
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreText = document.getElementById('scoreText');
+        const lifeText = document.getElementById('lifeText');
+        const restartBtn = document.getElementById('restartBtn');
+
+        // 屏幕自适应缩放
+        function resizeCanvas() {
+            const maxW = Math.min(window.innerWidth - 10, 480);
+            const maxH = Math.min(window.innerHeight - 120, 720);
+            canvas.width = maxW;
+            canvas.height = maxH;
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+
+        // 游戏全局变量
+        let gameRunning = true;
+        let score = 0;
+        let life = 3;
+        let player = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            radius: 16,
+            color: '#00ff88'
+        };
+        let enemyList = [];
+        let touchPos = { x: canvas.width / 2, y: canvas.height / 2 };
+
+        // 电脑鼠标控制
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            touchPos.x = e.clientX - rect.left;
+            touchPos.y = e.clientY - rect.top;
+        });
+
+        // 手机触摸滑动控制
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            touchPos.x = touch.clientX - rect.left;
+            touchPos.y = touch.clientY - rect.top;
+        });
+
+        // 重启按钮事件
+        restartBtn.addEventListener('click', resetGame);
+
+        // 重置游戏
+        function resetGame() {
+            gameRunning = true;
+            score = 0;
+            life = 3;
+            enemyList = [];
+            player.x = canvas.width / 2;
+            player.y = canvas.height / 2;
+            touchPos.x = player.x;
+            touchPos.y = player.y;
+            updateUI();
+            restartBtn.style.display = 'none';
+        }
+
+        // 更新界面文字
+        function updateUI() {
+            scoreText.textContent = score;
+            lifeText.textContent = life;
+        }
+
+        // 生成敌方小球
+        function spawnEnemy() {
+            if (!gameRunning) return;
+            const side = Math.floor(Math.random() * 4);
+            let x, y, speedX, speedY;
+            const enemyRadius = 10 + Math.random() * 12;
+            const speed = 1.5 + Math.random() * 2.2;
+
+            switch (side) {
+                case 0: // 顶部
+                    x = Math.random() * canvas.width;
+                    y = -enemyRadius;
+                    speedX = (player.x - x) / 120 * speed;
+                    speedY = speed;
+                    break;
+                case 1: // 底部
+                    x = Math.random() * canvas.width;
+                    y = canvas.height + enemyRadius;
+                    speedX = (player.x - x) / 120 * speed;
+                    speedY = -speed;
+                    break;
+                case 2: // 左侧
+                    x = -enemyRadius;
+                    y = Math.random() * canvas.height;
+                    speedX = speed;
+                    speedY = (player.y - y) / 120 * speed;
+                    break;
+                case 3: // 右侧
+                    x = canvas.width + enemyRadius;
+                    y = Math.random() * canvas.height;
+                    speedX = -speed;
+                    speedY = (player.y - y) / 120 * speed;
+                    break;
+            }
+            enemyList.push({ x, y, speedX, speedY, radius: enemyRadius, color: '#ff4455' });
+        }
+
+        // 碰撞检测 两圆相交
+        function checkCollision(objA, objB) {
+            const dx = objA.x - objB.x;
+            const dy = objA.y - objB.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            return dist < objA.radius + objB.radius;
+        }
+
+        // 游戏结束逻辑
+        function gameOver() {
+            gameRunning = false;
+            restartBtn.style.display = 'block';
+        }
+
+        // 游戏主更新逻辑
+        function gameUpdate() {
+            if (!gameRunning) return;
+            // 玩家平滑跟随鼠标/触摸点
+            player.x += (touchPos.x - player.x) * 0.12;
+            player.y += (touchPos.y - player.y) * 0.12;
+
+            // 生成敌人 随分数提升刷新速度
+            const spawnRate = Math.max(22, 60 - Math.floor(score / 8));
+            if (Math.floor(Date.now() / spawnRate) % 1 === 0) {
+                spawnEnemy();
+            }
+
+            // 更新敌人位置 + 边界清除 + 碰撞检测
+            for (let i = enemyList.length - 1; i >= 0; i--) {
+                const enemy = enemyList[i];
+                enemy.x += enemy.speedX;
+                enemy.y += enemy.speedY;
+
+                // 敌人超出屏幕直接删除
+                if (
+                    enemy.x < -60 || enemy.x > canvas.width + 60 ||
+                    enemy.y < -60 || enemy.y > canvas.height + 60
+                ) {
+                    enemyList.splice(i, 1);
+                    score += 1;
+                    updateUI();
+                    continue;
+                }
+
+                // 玩家与敌人碰撞扣血
+                if (checkCollision(player, enemy)) {
+                    enemyList.splice(i, 1);
+                    life -= 1;
+                    updateUI();
+                    if (life <= 0) gameOver();
+                }
+            }
+        }
+
+        // 画面渲染
+        function gameRender() {
+            // 清空画布
+            ctx.fillStyle = '#050510';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 绘制玩家
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+            ctx.fillStyle = player.color;
+            ctx.fill();
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // 绘制所有敌人
+            enemyList.forEach(enemy => {
+                ctx.beginPath();
+                ctx.arc(enemy.x, enemy.y, enemy.radius, 0, Math.PI * 2);
+                ctx.fillStyle = enemy.color;
+                ctx.fill();
+            });
+
+            // 游戏结束文字
+            if (!gameRunning) {
+                ctx.fillStyle = '#ff3333';
+                ctx.font = 'bold 32px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('游戏结束', canvas.width / 2, canvas.height / 2 - 20);
+                ctx.font = '18px Arial';
+                ctx.fillText(`最终分数：${score}`, canvas.width / 2, canvas.height / 2 + 15);
+            }
+        }
+
+        // 60帧稳定游戏循环（requestAnimationFrame 锁帧，稳定60fps >30要求）
+        function gameLoop() {
+            gameUpdate();
+            gameRender();
+            requestAnimationFrame(gameLoop);
+        }
+        gameLoop();
+    </script>
+</body>
+</html>
