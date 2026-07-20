@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>AI作品阅览器</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    width: 100%; height: 100%;
+    background: #90EE90;
+    font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* 主界面 */
+  #main-screen {
+    width: 100%; height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding-top: 15vh;
+  }
+
+  .glow-text {
+    color: #fff;
+    font-size: 1.6rem;
+    font-weight: bold;
+    text-align: center;
+    text-shadow: 0 0 10px rgba(255,255,255,0.8), 0 0 20px rgba(255,255,255,0.6), 0 0 40px rgba(255,255,255,0.4);
+    margin-bottom: 40px;
+    padding: 0 20px;
+    line-height: 1.6;
+  }
+
+  .btn {
+    background: transparent;
+    border: 2px solid #fff;
+    color: #fff;
+    padding: 14px 36px;
+    font-size: 1.1rem;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.25s;
+    font-weight: bold;
+    letter-spacing: 2px;
+    margin: 10px 0;
+    backdrop-filter: blur(4px);
+  }
+  .btn:hover, .btn:active {
+    background: rgba(255,255,255,0.2);
+    transform: scale(1.05);
+    box-shadow: 0 0 20px rgba(255,255,255,0.3);
+  }
+
+  /* 自定义下拉菜单 */
+  #dropdown-overlay {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.5);
+    display: none; align-items: center; justify-content: center;
+    z-index: 100;
+    opacity: 0; transition: opacity 0.3s;
+  }
+  #dropdown-overlay.show { display: flex; opacity: 1; }
+  #dropdown-box {
+    background: #fff;
+    border-radius: 16px;
+    width: 85%; max-width: 360px;
+    max-height: 60vh;
+    overflow: hidden;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+    transform: translateY(20px); transition: transform 0.3s;
+  }
+  #dropdown-overlay.show #dropdown-box { transform: translateY(0); }
+  #dropdown-title {
+    background: #90EE90;
+    color: #fff;
+    padding: 16px;
+    text-align: center;
+    font-size: 1.1rem;
+    font-weight: bold;
+    text-shadow: 0 0 8px rgba(255,255,255,0.6);
+  }
+  #dropdown-list {
+    max-height: 45vh;
+    overflow-y: auto;
+    padding: 8px 0;
+  }
+  .dropdown-item {
+    padding: 14px 20px;
+    color: #333;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: background 0.2s;
+    border-bottom: 1px solid #f0f0f0;
+    text-align: center;
+  }
+  .dropdown-item:last-child { border-bottom: none; }
+  .dropdown-item:hover, .dropdown-item:active { background: #e8f5e9; }
+  #dropdown-cancel {
+    padding: 14px;
+    text-align: center;
+    color: #888;
+    font-size: 0.95rem;
+    cursor: pointer;
+    border-top: 1px solid #eee;
+    transition: background 0.2s;
+  }
+  #dropdown-cancel:hover { background: #f5f5f5; }
+
+  /* 文件阅览区 */
+  #viewer-screen {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    display: none;
+    z-index: 50;
+  }
+  #viewer-screen.show { display: block; }
+  #viewer-iframe {
+    width: 100%; height: 100%;
+    border: none;
+    background: #fff;
+  }
+
+  /* 悬浮球 */
+  #float-ball {
+    position: fixed;
+    width: 64px; height: 64px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.95);
+    color: #4CAF50;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.7rem;
+    font-weight: bold;
+    text-align: center;
+    line-height: 1.2;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2), 0 0 10px rgba(255,255,255,0.5);
+    cursor: pointer;
+    z-index: 200;
+    user-select: none;
+    touch-action: none;
+    padding: 4px;
+  }
+  #float-ball.dragging {
+    box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+    transform: scale(1.1);
+  }
+
+  /* 自定义确认弹窗 */
+  #confirm-overlay {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.6);
+    display: none; align-items: center; justify-content: center;
+    z-index: 300;
+    opacity: 0; transition: opacity 0.25s;
+  }
+  #confirm-overlay.show { display: flex; opacity: 1; }
+  #confirm-box {
+    background: #fff;
+    border-radius: 20px;
+    width: 80%; max-width: 300px;
+    padding: 24px;
+    text-align: center;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+    transform: scale(0.9); transition: transform 0.25s;
+  }
+  #confirm-overlay.show #confirm-box { transform: scale(1); }
+  #confirm-text {
+    color: #333;
+    font-size: 1.05rem;
+    margin-bottom: 24px;
+    line-height: 1.5;
+  }
+  .confirm-btns {
+    display: flex; gap: 12px; justify-content: center;
+  }
+  .confirm-btn {
+    flex: 1;
+    padding: 10px 0;
+    border-radius: 10px;
+    border: none;
+    font-size: 1rem;
+    cursor: pointer;
+    font-weight: bold;
+    transition: all 0.2s;
+  }
+  .confirm-yes {
+    background: #4CAF50;
+    color: #fff;
+  }
+  .confirm-yes:hover { background: #43a047; }
+  .confirm-no {
+    background: #f5f5f5;
+    color: #666;
+  }
+  .confirm-no:hover { background: #e0e0e0; }
+
+  /* 图片浏览界面 */
+  #gallery-screen {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: #1a1a2e;
+    display: none;
+    flex-direction: column;
+    z-index: 150;
+    opacity: 0; transition: opacity 0.3s;
+  }
+  #gallery-screen.show { display: flex; opacity: 1; }
+  #gallery-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px;
+    background: rgba(0,0,0,0.5);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    flex-shrink: 0;
+  }
+  #gallery-title {
+    color: #fff;
+    font-size: 1.1rem;
+    font-weight: bold;
+  }
+  #gallery-exit {
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: #fff;
+    padding: 6px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background 0.2s;
+  }
+  #gallery-exit:hover { background: rgba(255,255,255,0.25); }
+  #gallery-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .gallery-img-wrap {
+    margin-bottom: 16px;
+    border-radius: 12px;
+    overflow: hidden;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+  }
+  .gallery-img {
+    width: 100%;
+    display: block;
+    border-radius: 12px;
+  }
+  .gallery-img-error {
+    padding: 40px;
+    text-align: center;
+    color: #888;
+    font-size: 0.9rem;
+  }
+  .gallery-img-label {
+    padding: 8px 12px;
+    color: #aaa;
+    font-size: 0.85rem;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<!-- 主界面 -->
+<div id="main-screen">
+  <div class="glow-text">选择你看好了AI作品<br>点击下方按钮即可阅览</div>
+  <button class="btn" id="btn-select">选择阅览</button>
+  <button class="btn" id="btn-gallery" style="margin-top:20px;">查看聊天图片</button>
+</div>
+
+<!-- 自定义下拉菜单 -->
+<div id="dropdown-overlay">
+  <div id="dropdown-box">
+    <div id="dropdown-title">选择要阅览的作品</div>
+    <div id="dropdown-list"></div>
+    <div id="dropdown-cancel">取消</div>
+  </div>
+</div>
+
+<!-- 文件阅览区 -->
+<div id="viewer-screen">
+  <iframe id="viewer-iframe"></iframe>
+</div>
+
+<!-- 悬浮球 -->
+<div id="float-ball">点击<br>退出</div>
+
+<!-- 自定义确认弹窗 -->
+<div id="confirm-overlay">
+  <div id="confirm-box">
+    <div id="confirm-text">确定要退出当前作品<br>返回主界面吗？</div>
+    <div class="confirm-btns">
+      <button class="confirm-btn confirm-no" id="confirm-no">取消</button>
+      <button class="confirm-btn confirm-yes" id="confirm-yes">确定退出</button>
+    </div>
+  </div>
+</div>
+
+<!-- 图片浏览界面 -->
+<div id="gallery-screen">
+  <div id="gallery-header">
+    <span id="gallery-title">聊天图片</span>
+    <button id="gallery-exit">退出</button>
+  </div>
+  <div id="gallery-scroll"></div>
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  const files = [
+    'Kimi2D.html', 'Kimi3D.html',
+    'Deepseek2D.html', 'DeepSeek3D.html',
+    'YuanBao2D.html', 'YuanBao3D.html',
+    'DoBao2D.html', 'DoBao3D.html'
+  ];
+
+  // DOM 引用
+  const mainScreen = document.getElementById('main-screen');
+  const btnSelect = document.getElementById('btn-select');
+  const btnGallery = document.getElementById('btn-gallery');
+  const dropdownOverlay = document.getElementById('dropdown-overlay');
+  const dropdownList = document.getElementById('dropdown-list');
+  const dropdownCancel = document.getElementById('dropdown-cancel');
+  const viewerScreen = document.getElementById('viewer-screen');
+  const viewerIframe = document.getElementById('viewer-iframe');
+  const floatBall = document.getElementById('float-ball');
+  const confirmOverlay = document.getElementById('confirm-overlay');
+  const confirmYes = document.getElementById('confirm-yes');
+  const confirmNo = document.getElementById('confirm-no');
+  const galleryScreen = document.getElementById('gallery-screen');
+  const galleryScroll = document.getElementById('gallery-scroll');
+  const galleryExit = document.getElementById('gallery-exit');
+
+  // ========== 下拉菜单 ==========
+  function openDropdown() {
+    dropdownList.innerHTML = '';
+    files.forEach(f => {
+      const item = document.createElement('div');
+      item.className = 'dropdown-item';
+      item.textContent = f;
+      item.addEventListener('click', () => {
+        closeDropdown();
+        loadFile(f);
+      });
+      dropdownList.appendChild(item);
+    });
+    dropdownOverlay.classList.add('show');
+  }
+  function closeDropdown() {
+    dropdownOverlay.classList.remove('show');
+  }
+  btnSelect.addEventListener('click', openDropdown);
+  dropdownCancel.addEventListener('click', closeDropdown);
+  dropdownOverlay.addEventListener('click', e => {
+    if (e.target === dropdownOverlay) closeDropdown();
+  });
+
+  // ========== 加载文件 & 悬浮球 ==========
+  function loadFile(filename) {
+    viewerIframe.src = filename;
+    mainScreen.style.display = 'none';
+    viewerScreen.classList.add('show');
+    showFloatBall();
+  }
+
+  function exitViewer() {
+    viewerIframe.src = 'about:blank';
+    viewerScreen.classList.remove('show');
+    mainScreen.style.display = 'flex';
+    floatBall.style.display = 'none';
+  }
+
+  // 悬浮球状态
+  let ballDownTime = 0;
+  let ballStartX = 0, ballStartY = 0;
+  let ballCurX = 0, ballCurY = 0;
+  let ballIsDragging = false;
+  let ballMoved = false;
+  const LONG_PRESS_MS = 400;
+  const MOVE_THRESHOLD = 5;
+
+  function showFloatBall() {
+    ballCurX = window.innerWidth - 80;
+    ballCurY = window.innerHeight - 100;
+    floatBall.style.left = ballCurX + 'px';
+    floatBall.style.top = ballCurY + 'px';
+    floatBall.style.display = 'flex';
+  }
+
+  function onBallDown(e) {
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    ballDownTime = Date.now();
+    ballStartX = clientX;
+    ballStartY = clientY;
+    ballIsDragging = false;
+    ballMoved = false;
+    floatBall.classList.remove('dragging');
+    e.preventDefault();
+  }
+
+  function onBallMove(e) {
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    const dx = clientX - ballStartX;
+    const dy = clientY - ballStartY;
+
+    if (!ballIsDragging) {
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      const elapsed = Date.now() - ballDownTime;
+      if (dist > MOVE_THRESHOLD || elapsed > LONG_PRESS_MS) {
+        ballIsDragging = true;
+        floatBall.classList.add('dragging');
+      }
+    }
+
+    if (ballIsDragging) {
+      ballCurX += dx;
+      ballCurY += dy;
+      ballCurX = Math.max(0, Math.min(window.innerWidth - 64, ballCurX));
+      ballCurY = Math.max(0, Math.min(window.innerHeight - 64, ballCurY));
+      floatBall.style.left = ballCurX + 'px';
+      floatBall.style.top = ballCurY + 'px';
+      ballStartX = clientX;
+      ballStartY = clientY;
+      ballMoved = true;
+    }
+  }
+
+  function onBallUp(e) {
+    const elapsed = Date.now() - ballDownTime;
+    floatBall.classList.remove('dragging');
+
+    if (!ballIsDragging && elapsed <= LONG_PRESS_MS && !ballMoved) {
+      confirmOverlay.classList.add('show');
+    }
+    ballIsDragging = false;
+  }
+
+  floatBall.addEventListener('mousedown', onBallDown);
+  document.addEventListener('mousemove', onBallMove);
+  document.addEventListener('mouseup', onBallUp);
+  floatBall.addEventListener('touchstart', onBallDown, { passive: false });
+  document.addEventListener('touchmove', onBallMove, { passive: false });
+  document.addEventListener('touchend', onBallUp);
+
+  // 确认弹窗
+  confirmYes.addEventListener('click', () => {
+    confirmOverlay.classList.remove('show');
+    exitViewer();
+  });
+  confirmNo.addEventListener('click', () => {
+    confirmOverlay.classList.remove('show');
+  });
+  confirmOverlay.addEventListener('click', e => {
+    if (e.target === confirmOverlay) confirmOverlay.classList.remove('show');
+  });
+
+  // ========== 图片画廊 ==========
+  function openGallery() {
+    galleryScroll.innerHTML = '';
+    for (let i = 1; i <= 10; i++) {
+      const wrap = document.createElement('div');
+      wrap.className = 'gallery-img-wrap';
+
+      const img = document.createElement('img');
+      img.className = 'gallery-img';
+      img.src = i + '.png';
+      img.alt = '图片 ' + i;
+      img.loading = 'lazy';
+
+      const label = document.createElement('div');
+      label.className = 'gallery-img-label';
+      label.textContent = i + '.png';
+
+      img.onerror = function() {
+        this.style.display = 'none';
+        const err = document.createElement('div');
+        err.className = 'gallery-img-error';
+        err.textContent = '无法加载 ' + i + '.png';
+        wrap.insertBefore(err, label);
+      };
+
+      wrap.appendChild(img);
+      wrap.appendChild(label);
+      galleryScroll.appendChild(wrap);
+    }
+    galleryScreen.classList.add('show');
+  }
+  function closeGallery() {
+    galleryScreen.classList.remove('show');
+  }
+  btnGallery.addEventListener('click', openGallery);
+  galleryExit.addEventListener('click', closeGallery);
+
+})();
+</script>
+</body>
+</html>
